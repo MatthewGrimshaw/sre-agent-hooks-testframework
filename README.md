@@ -57,7 +57,7 @@ For the included Azure SRE Agent SQL example, the layers are:
 | Tool implementation | Which actions the tool supports and which approved system it connects to. |
 | Azure permissions | Which cloud resources the assistant's identity can access or change. |
 | Host and network controls | What can run on a machine and which systems it can reach. |
-| Database permissions | Which data and database operations the connected identity can use. |
+| Dataplane permissions | Which data, vm or database operations the connected identity can use. |
 
 These are complementary layers, not a guaranteed execution order. This is a
 conceptual model of protections to configure and verify; it does not mean this
