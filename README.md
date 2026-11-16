@@ -1,6 +1,6 @@
 # Python hook testing framework
 
-**This repository helps teams check that automated decision-making rules behave as intended before they are used in live operations, with repeatable tests and a readable results report.**
+**This repository helps teams check that python hooks used in the Azure SRE Agent behave as intended before they are used in live operations, with repeatable tests and a readable results report.**
 
 ![Test report overview](./images/report-1.png)
 ![Expanded test report details](./images/report-2.png)
@@ -36,6 +36,45 @@ explicit permission grant. Access controls and any other approvals still apply.
 
 Framework self-tests also appear in the report, labelled `framework`. They
 check the testing machinery, not a particular operational rule.
+
+## Overall security boundary: how the protections work together
+
+A hook is one checkpoint, not the whole security boundary. An automated
+assistant should only be able to take actions that its settings, permissions,
+and the systems it connects to all permit.
+
+**Hooks complement access policies, cloud permissions, network restrictions,
+and database permissions. They do not replace those protections or grant
+additional access.** If a hook raises no objection, the action must still
+satisfy every other applicable control.
+
+For the included Azure SRE Agent SQL example, the layers are:
+
+| Layer | What it should control |
+|---|---|
+| Agent settings and approvals | Which tools the assistant can use and when a person must approve an action. |
+| Hook checks | Whether a proposed command meets the hook's rules before the tool runs. |
+| Tool implementation | Which actions the tool supports and which approved system it connects to. |
+| Azure permissions | Which cloud resources the assistant's identity can access or change. |
+| Host and network controls | What can run on a machine and which systems it can reach. |
+| Database permissions | Which data and database operations the connected identity can use. |
+
+These are complementary layers, not a guaranteed execution order. This is a
+conceptual model of protections to configure and verify; it does not mean this
+repository implements or verifies every layer. Other hooks may need different
+controls around them.
+
+### Where this framework fits
+
+The framework tests the **hook's decisions** against agreed examples. It does
+not deploy the hook, configure permissions, or prove that the surrounding
+systems enforce their controls.
+
+The SQL guard aims to keep selected database commands focused on diagnosis,
+with a limited exception for ending a database session outside production.
+Its tests do not establish that a database destination is genuinely approved
+or that production is isolated. Those boundaries need independent checks in
+the deployed environment.
 
 ## Included examples
 

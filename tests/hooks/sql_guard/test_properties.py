@@ -19,7 +19,10 @@ def test_kill_boundaries(spid, subscription):
         f"az vm run-command invoke --subscription {subscription} "
         f"""--scripts 'sqlcmd -Q "KILL {spid}"'"""
     )
-    result = run_hook({"tool_input": {"command": command}}, SUITE.hook)
+    result = run_hook(
+        {"tool_input": {"command": command}}, SUITE.hook,
+        SUITE.timeout_seconds, SUITE.protocol,
+    )
     permitted = subscription != "production" and 51 <= spid <= 32767
     assert result.outcome == ("no_objection" if permitted else "block"), result.detail
 
@@ -33,7 +36,10 @@ def test_appending_write_rejects(prefix, separator):
         "az vm run-command invoke --subscription production "
         f"""--scripts 'sqlcmd -Q "{query}"'"""
     )
-    result = run_hook({"tool_input": {"command": command}}, SUITE.hook)
+    result = run_hook(
+        {"tool_input": {"command": command}}, SUITE.hook,
+        SUITE.timeout_seconds, SUITE.protocol,
+    )
     assert result.outcome == "block", result.detail
 
 
@@ -43,7 +49,8 @@ def test_appending_write_rejects(prefix, separator):
 )))
 def test_invalid_execution_command_type_rejects(value):
     result = run_hook(
-        {"tool_name": "RunInTerminal", "tool_input": {"command": value}}, SUITE.hook
+        {"tool_name": "RunInTerminal", "tool_input": {"command": value}}, SUITE.hook,
+        SUITE.timeout_seconds, SUITE.protocol,
     )
     assert result.outcome == "block", f"F07: {result.detail}"
 
