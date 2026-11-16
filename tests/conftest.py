@@ -10,6 +10,13 @@ THEME_SCRIPT = """<script>
     const theme =
       param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     document.documentElement.setAttribute("data-theme", theme);
+    document.addEventListener("click", (event) => {
+      const button = event.target.closest("button.details-toggle");
+      if (button) {
+        event.stopPropagation();
+        button.closest("td").click();
+      }
+    }, true);
   })();
 </script>"""
 
@@ -45,17 +52,30 @@ def pytest_runtest_makereport(item, call):
     case = callspec.params.get("case") if callspec is not None else None
     report.finding = case["finding"] if isinstance(case, dict) else "-"
     report.criterion = case["criterion"] if isinstance(case, dict) else "-"
+    report.description = (
+        case["description"] if isinstance(case, dict)
+        else (item.obj.__doc__ or item.originalname.removeprefix("test_").replace("_", " ")).strip()
+    )
     return report
 
 
 def pytest_html_results_table_header(cells):
+    cells[-1] = "<th>Details</th>"
     cells.insert(1, "<th>Finding</th>")
     cells.insert(2, "<th>Criterion</th>")
+    cells.insert(3, "<th>Description</th>")
 
 
 def pytest_html_results_table_row(report, cells):
+    cells[-1] = (
+        '<td class="col-details"><button type="button" class="details-toggle">'
+        '<span class="details-show">Show details</span>'
+        '<span class="details-hide">Hide details</span>'
+        '</button></td>'
+    )
     cells.insert(1, f"<td>{escape(getattr(report, 'finding', '-'))}</td>")
     cells.insert(2, f"<td>{escape(getattr(report, 'criterion', '-'))}</td>")
+    cells.insert(3, f"<td>{escape(getattr(report, 'description', '-'))}</td>")
 
 
 @pytest.hookimpl(wrapper=True)

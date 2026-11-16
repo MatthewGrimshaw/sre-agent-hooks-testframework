@@ -1,5 +1,8 @@
 # SRE Agent hook: how it helps protect operations
 
+![image](./images/report-1.png)
+![image](./images/report-2.png)
+
 ## Overall security boundary: how the protections work together
 
 Azure SRE Agent uses tools to investigate and respond to incidents. This hook
@@ -141,6 +144,11 @@ reviewed hook code. Do not use sensitive values in the catalogue or reports.
 
 **Viewing the test report**
 
+- **Overview:** the table includes each scenario's description. Failed and
+  errored rows are highlighted in red, with details collapsed by default.
+  Use the **Show details** / **Hide details** button on each row to toggle
+  its details. Expanded rows show the full traceback without a second
+  expand/collapse control.
 - **Automatic report:** each pytest run using this configuration writes
   [reports/tests.html](./reports/tests.html), even when tests fail. Each run
   replaces the previous report.
