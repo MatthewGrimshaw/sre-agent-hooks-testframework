@@ -1,0 +1,29 @@
+schema_version: 2
+suite:
+  id: required-field
+  description: Example check requiring an explanation before an action.
+  hook: hooks/required_field/hook.py
+  protocol: sre-agent
+  timeout_seconds: 3
+
+cases:
+  - id: purpose-provided
+    description: An action with a clear purpose raises no objection.
+    input: {purpose: Investigate a service alert}
+    expected: {outcome: no_objection}
+  - id: purpose-missing
+    description: An action without a purpose is blocked with an explanation.
+    input: {}
+    expected: {outcome: block}
+  - id: purpose-blank
+    description: Whitespace alone is not an explanation.
+    input: {purpose: "   "}
+    expected: {outcome: block}
+  - id: purpose-wrong-type
+    description: An explanation must be text rather than a number.
+    input: {purpose: 42}
+    expected: {outcome: block}
+  - id: invalid-context
+    description: A non-object input is rejected without crashing.
+    input: null
+    expected: {outcome: block}

@@ -1,28 +1,10 @@
-from pathlib import Path
-
-import pytest
-
-from runner import load_catalogue, run_hook
+from framework.catalogue import Case, Suite
+from framework.runner import Result
 
 
-CATALOGUE = load_catalogue(Path(__file__).with_name("cases.yaml"))
-CRITERIA = {criterion["id"]: criterion for criterion in CATALOGUE["criteria"]}
-
-
-@pytest.mark.parametrize(
-    "case", CATALOGUE["cases"], ids=lambda case: f"{case['finding']}-{case['id']}"
-)
-def test_policy(case):
-    result = run_hook(case["input"])
-    assert result.outcome == case["expected"], (
-        f"{case['finding']} / {case['criterion']}: {case['description']}\n"
-        f"Source: {CRITERIA[case['criterion']]['source']}\n"
-        f"Expected {case['expected']}; actual {result.outcome}: {result.detail}"
+def test_policy(suite: Suite, case: Case, hook_result: Result) -> None:
+    assert hook_result.outcome == case.expected, (
+        f"{suite.id}: {case.description}\n"
+        f"Expected {case.expected}; actual {hook_result.outcome}: {hook_result.detail}\n"
+        f"{suite.criteria.get(case.criterion, '')}"
     )
-
-
-def test_all_initial_findings_have_negative_regressions():
-    initial = {f"F{number:02}" for number in range(1, 8)}
-    findings = {finding["id"] for finding in CATALOGUE["findings"]}
-    negatives = {case["finding"] for case in CATALOGUE["cases"] if case["expected"] == "block"}
-    assert initial <= findings & negatives

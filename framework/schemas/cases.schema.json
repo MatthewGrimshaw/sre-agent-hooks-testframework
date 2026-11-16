@@ -2,22 +2,34 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "findings", "criteria", "cases"],
+  "required": ["schema_version", "suite", "cases"],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "hook", "protocol", "timeout_seconds"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+        "description": {"type": "string", "minLength": 1},
+        "hook": {"type": "string", "minLength": 1},
+        "protocol": {"const": "sre-agent"},
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
     "findings": {
-      "type": "array", "minItems": 1,
+      "type": "array",
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["id", "description"],
         "properties": {
-          "id": {"type": "string", "pattern": "^F[0-9]{2}$"},
+          "id": {"type": "string", "minLength": 1},
           "description": {"type": "string", "minLength": 1}
         }
       }
     },
     "criteria": {
-      "type": "array", "minItems": 1,
+      "type": "array",
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["id", "requirement", "source"],
@@ -32,14 +44,18 @@
       "type": "array", "minItems": 1,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "finding", "criterion", "description", "input", "expected"],
+        "required": ["id", "description", "input", "expected"],
         "properties": {
           "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
-          "finding": {"type": "string", "pattern": "^F[0-9]{2}$"},
+          "finding": {"type": "string", "minLength": 1},
           "criterion": {"type": "string", "minLength": 1},
           "description": {"type": "string", "minLength": 1},
           "input": {},
-          "expected": {"enum": ["pass", "block"]}
+          "expected": {
+            "type": "object", "additionalProperties": false,
+            "required": ["outcome"],
+            "properties": {"outcome": {"enum": ["no_objection", "block"]}}
+          }
         }
       }
     }

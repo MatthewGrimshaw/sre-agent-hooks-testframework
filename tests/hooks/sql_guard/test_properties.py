@@ -1,6 +1,14 @@
+from pathlib import Path
+
+import pytest
 from hypothesis import given, settings, strategies as st
 
-from runner import run_hook
+from framework.catalogue import load_catalogue
+from framework.runner import run_hook
+
+
+SUITE = load_catalogue(Path(__file__).with_name("cases.yaml"))
+pytestmark = pytest.mark.suite("sql-guard")
 
 
 @settings(max_examples=20, deadline=None, derandomize=True)
@@ -11,9 +19,9 @@ def test_kill_boundaries(spid, subscription):
         f"az vm run-command invoke --subscription {subscription} "
         f"""--scripts 'sqlcmd -Q "KILL {spid}"'"""
     )
-    result = run_hook({"tool_input": {"command": command}})
+    result = run_hook({"tool_input": {"command": command}}, SUITE.hook)
     permitted = subscription != "production" and 51 <= spid <= 32767
-    assert result.outcome == ("pass" if permitted else "block"), result.detail
+    assert result.outcome == ("no_objection" if permitted else "block"), result.detail
 
 
 @settings(max_examples=12, deadline=None, derandomize=True)
@@ -25,7 +33,7 @@ def test_appending_write_rejects(prefix, separator):
         "az vm run-command invoke --subscription production "
         f"""--scripts 'sqlcmd -Q "{query}"'"""
     )
-    result = run_hook({"tool_input": {"command": command}})
+    result = run_hook({"tool_input": {"command": command}}, SUITE.hook)
     assert result.outcome == "block", result.detail
 
 
@@ -34,5 +42,14 @@ def test_appending_write_rejects(prefix, separator):
     st.sampled_from(["command", "parameters"]), st.integers(), max_size=2
 )))
 def test_invalid_execution_command_type_rejects(value):
-    result = run_hook({"tool_name": "RunInTerminal", "tool_input": {"command": value}})
+    result = run_hook(
+        {"tool_name": "RunInTerminal", "tool_input": {"command": value}}, SUITE.hook
+    )
     assert result.outcome == "block", f"F07: {result.detail}"
+
+
+def test_all_initial_findings_have_negative_regressions():
+    initial = {f"F{number:02}" for number in range(1, 8)}
+    negatives = {case.finding for case in SUITE.cases if case.expected == "block"}
+    assert initial <= SUITE.findings.keys() & negatives
+    assert SUITE.findings.keys() <= negatives
