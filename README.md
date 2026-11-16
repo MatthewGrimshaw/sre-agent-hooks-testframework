@@ -178,6 +178,7 @@ results to the downloadable `hook-reports` artifact:
 | `bandit.json` | Separate source-code analysis findings; these are not included in the HTML test results. |
 | Step logs | Installation, execution, and diagnostic messages, including failures that prevent reports from being generated. |
 
+![image](./images/github-1.png)
 
 ## Add a hook or a scenario
 
