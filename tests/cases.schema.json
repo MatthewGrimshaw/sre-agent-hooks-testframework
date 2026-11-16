@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "findings", "criteria", "cases"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "findings": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "description"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^F[0-9]{2}$"},
+          "description": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "criteria": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "requirement", "source"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "requirement": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "cases": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "finding", "criterion", "description", "input", "expected"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+          "finding": {"type": "string", "pattern": "^F[0-9]{2}$"},
+          "criterion": {"type": "string", "minLength": 1},
+          "description": {"type": "string", "minLength": 1},
+          "input": {},
+          "expected": {"enum": ["pass", "block"]}
+        }
+      }
+    }
+  }
+}

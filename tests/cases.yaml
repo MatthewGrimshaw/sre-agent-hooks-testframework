@@ -1,0 +1,415 @@
+schema_version: 1
+findings:
+  - id: F01
+    description: SELECT prefix matching permits trailing writes.
+  - id: F02
+    description: Inert and procedure prefixes permit trailing writes.
+  - id: F03
+    description: A CTE containing SELECT can modify data.
+  - id: F04
+    description: Only fragments of the shell command and SQLCMD input are validated.
+  - id: F05
+    description: Unrecognised command forms escape inspection.
+  - id: F06
+    description: An Azure subscription is not authorisation of the SQL destination.
+  - id: F07
+    description: Unexpected input does not consistently fail closed.
+criteria:
+  - id: sql-readonly
+    requirement: Reject any unapproved modifying operation anywhere in a batch.
+    source: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+  - id: command-boundary
+    requirement: Reject additional shell operations and SQLCMD shell directives.
+    source: https://owasp.org/www-project-web-security-testing-guide/v42/4-Web_Application_Security_Testing/07-Input_Validation_Testing/12-Testing_for_Command_Injection
+  - id: input-contract
+    requirement: Invalid hook contexts must explicitly reject, not crash or pass.
+    source: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+  - id: kill-policy
+    requirement: One bounded session kill requires an explicit approved subscription.
+    source: Local policy in hooks/hook.py; subscription is not proof of SQL target identity.
+  - id: target-authorization
+    requirement: A nonproduction VM subscription must not authorise a kill on a production or unapproved SQL destination.
+    source: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+
+cases:
+  - id: allow-read
+    finding: F01
+    criterion: sql-readonly
+    description: A basic diagnostic query raises no objection.
+    input:
+      tool_name: RunInTerminal
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SELECT 1"'
+    expected: pass
+  - id: block-prod-kill
+    finding: F06
+    criterion: kill-policy
+    description: Production termination must reject.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "KILL 51"'
+    expected: block
+  - id: allow-nonprod-kill
+    finding: F06
+    criterion: kill-policy
+    description: Legacy subscription-only baseline, not evidence that the actual SQL target is authorised.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription 76a256fd-59fd-473a-9214-04eaddbcd56e
+          --scripts 'sqlcmd -Q "KILL 51"'
+    expected: pass
+  - id: block-missing-subscription
+    finding: F06
+    criterion: kill-policy
+    description: Ambient subscription must not determine the target.
+    input:
+      tool_input:
+        command: az vm run-command invoke --scripts 'sqlcmd -Q "SELECT 1"'
+    expected: block
+  - id: block-select-write
+    finding: F01
+    criterion: sql-readonly
+    description: A SELECT prefix cannot hide a following write.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SELECT 1 DROP TABLE dbo.GuardReviewProbe"'
+    expected: block
+  - id: block-set-write
+    finding: F02
+    criterion: sql-readonly
+    description: An inert prefix cannot hide a following write.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SET NOCOUNT ON DROP TABLE dbo.GuardReviewProbe"'
+    expected: block
+  - id: block-proc-write
+    finding: F02
+    criterion: sql-readonly
+    description: An approved procedure prefix cannot hide a following write.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "EXEC dbo.usp_detectblocking DROP TABLE dbo.GuardReviewProbe"'
+    expected: block
+  - id: block-cte-delete
+    finding: F03
+    criterion: sql-readonly
+    description: A CTE containing SELECT is not necessarily read-only.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "WITH c AS (SELECT 1 AS x) DELETE FROM dbo.GuardReviewProbe"'
+    expected: block
+  - id: block-payload-tail
+    finding: F04
+    criterion: command-boundary
+    description: Shell operations after the query must reject.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SELECT 1"; echo GUARD_TEST_ONLY'
+    expected: block
+  - id: block-outer-tail
+    finding: F04
+    criterion: command-boundary
+    description: Shell operations outside the script must reject.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SELECT 1"'; echo GUARD_TEST_ONLY
+    expected: block
+  - id: block-sqlcmd-directive
+    finding: F04
+    criterion: command-boundary
+    description: SQLCMD shell directives must reject.
+    input:
+      tool_input:
+        command: |-
+          az vm run-command invoke --subscription production --scripts 'sqlcmd -Q "SELECT 1
+          !! echo GUARD_TEST_ONLY"'
+    expected: block
+  - id: block-alternate-cli-form
+    finding: F05
+    criterion: command-boundary
+    description: Global flags must not evade production termination restrictions.
+    input:
+      tool_input:
+        command: >-
+          az --only-show-errors vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "KILL 51"'
+    expected: block
+  - id: block-null-context
+    finding: F07
+    criterion: input-contract
+    description: Null context must explicitly reject.
+    input: null
+    expected: block
+  - id: block-list-context
+    finding: F07
+    criterion: input-contract
+    description: List context must explicitly reject.
+    input: []
+    expected: block
+  - id: block-select-update
+    finding: F01
+    criterion: sql-readonly
+    description: A newline is not a security boundary between SELECT and UPDATE.
+    input:
+      tool_input:
+        command: |-
+          az vm run-command invoke --subscription production --scripts 'sqlcmd -Q "SELECT 1
+          UPDATE dbo.GuardReviewProbe SET x = 1"'
+    expected: block
+  - id: block-select-insert
+    finding: F01
+    criterion: sql-readonly
+    description: A SELECT must not hide an INSERT without a semicolon.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SELECT 1 INSERT INTO dbo.GuardReviewProbe(x) VALUES (1)"'
+    expected: block
+  - id: block-select-into
+    finding: F01
+    criterion: sql-readonly
+    description: SELECT INTO writes data even without a second statement.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SELECT 1 AS x INTO dbo.GuardReviewProbe"'
+    expected: block
+  - id: allow-inert-read
+    finding: F02
+    criterion: sql-readonly
+    description: Intended inert prelude and diagnostic SELECT remain permitted.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SET NOCOUNT ON; SELECT 1"'
+    expected: pass
+  - id: allow-diagnostic-proc
+    finding: F02
+    criterion: sql-readonly
+    description: A bare allowlisted diagnostic procedure remains permitted.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "EXEC dbo.usp_detectblocking"'
+    expected: pass
+  - id: block-cte-update
+    finding: F03
+    criterion: sql-readonly
+    description: SELECT inside a CTE must not authorise a final UPDATE.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "WITH c AS (SELECT x FROM dbo.GuardReviewProbe) UPDATE c SET x = 1"'
+    expected: block
+  - id: block-cte-insert
+    finding: F03
+    criterion: sql-readonly
+    description: SELECT inside a CTE must not authorise a final INSERT.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "WITH c AS (SELECT 1 AS x) INSERT INTO dbo.GuardReviewProbe(x) SELECT x FROM c"'
+    expected: block
+  - id: allow-cte-read
+    finding: F03
+    criterion: sql-readonly
+    description: A genuinely read-only CTE remains permitted.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "WITH c AS (SELECT 1 AS x) SELECT x FROM c"'
+    expected: pass
+  - id: block-outer-prefix
+    finding: F04
+    criterion: command-boundary
+    description: An extra shell command before the Azure command must reject.
+    input:
+      tool_input:
+        command: >-
+          echo GUARD_TEST_ONLY;
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SELECT 1"'
+    expected: block
+  - id: block-second-query
+    finding: F04
+    criterion: command-boundary
+    description: A first accepted query must not conceal a second unreviewed query argument.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SELECT 1" -Q "DROP TABLE dbo.GuardReviewProbe"'
+    expected: block
+  - id: block-second-script
+    finding: F04
+    criterion: command-boundary
+    description: All script arguments must be inspected, not just the first string.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "SELECT 1"' 'echo GUARD_TEST_ONLY'
+    expected: block
+  - id: block-sqlcmd-file-directive
+    finding: F04
+    criterion: command-boundary
+    description: SQLCMD file inclusion is outside the visible inline query.
+    input:
+      tool_input:
+        command: |-
+          az vm run-command invoke --subscription production --scripts 'sqlcmd -Q "SELECT 1
+          :r guard-test-only.sql"'
+    expected: block
+  - id: block-vmss-alternate-cli-form
+    finding: F05
+    criterion: command-boundary
+    description: VMSS global flags must not bypass inspection.
+    input:
+      tool_input:
+        command: >-
+          az --only-show-errors vmss run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "KILL 51"'
+    expected: block
+  - id: block-quoted-executable
+    finding: F05
+    criterion: command-boundary
+    description: A shell-quoted executable must not bypass scope detection.
+    input:
+      tool_input:
+        command: >-
+          "az" vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "KILL 51"'
+    expected: block
+  - id: block-nonprod-vm-production-sql
+    finding: F06
+    criterion: target-authorization
+    description: Synthetic production SQL destination must not be authorised by the VM subscription.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription 76a256fd-59fd-473a-9214-04eaddbcd56e
+          --scripts 'sqlcmd -S production-sql.invalid -Q "KILL 51"'
+    expected: block
+  - id: block-nonprod-vm-unknown-sql
+    finding: F06
+    criterion: target-authorization
+    description: An unapproved synthetic SQL destination must not inherit VM authorisation.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription 76a256fd-59fd-473a-9214-04eaddbcd56e
+          --scripts 'sqlcmd -S unapproved-sql.invalid -Q "KILL 51"'
+    expected: block
+  - id: block-conflicting-sql-destinations
+    finding: F06
+    criterion: target-authorization
+    description: Conflicting server arguments cannot establish one trusted destination.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription 76a256fd-59fd-473a-9214-04eaddbcd56e
+          --scripts 'sqlcmd -S diagnostics-sql.invalid -Q "KILL 51" -S production-sql.invalid'
+    expected: block
+  - id: block-empty-context
+    finding: F07
+    criterion: input-contract
+    description: Missing hook identity and input cannot establish a safe decision.
+    input: {}
+    expected: block
+  - id: block-empty-execution-input
+    finding: F07
+    criterion: input-contract
+    description: An execution tool with empty arguments must explicitly reject.
+    input:
+      tool_name: RunInTerminal
+      tool_input: {}
+    expected: block
+  - id: block-missing-execution-input
+    finding: F07
+    criterion: input-contract
+    description: Missing arguments on an execution tool must explicitly reject.
+    input:
+      tool_name: RunInTerminal
+    expected: block
+  - id: block-null-execution-input
+    finding: F07
+    criterion: input-contract
+    description: Null arguments on an execution tool must explicitly reject.
+    input:
+      tool_name: RunInTerminal
+      tool_input: null
+    expected: block
+  - id: block-unsupported-execution-field
+    finding: F07
+    criterion: input-contract
+    description: Unknown execution fields must not silently escape inspection.
+    input:
+      tool_name: RunInTerminal
+      tool_input:
+        unsupported_command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "KILL 51"'
+    expected: block
+  - id: block-nested-execution-input
+    finding: F07
+    criterion: input-contract
+    description: Unsupported nested execution arguments must reject.
+    input:
+      tool_name: RunInTerminal
+      tool_input:
+        parameters:
+          command: >-
+            az vm run-command invoke --subscription production
+            --scripts 'sqlcmd -Q "KILL 51"'
+    expected: block
+  - id: block-wrong-command-type
+    finding: F07
+    criterion: input-contract
+    description: An object-valued execution command is not a validated command string.
+    input:
+      tool_name: RunInTerminal
+      tool_input:
+        command:
+          value: >-
+            az vm run-command invoke --subscription production
+            --scripts 'sqlcmd -Q "KILL 51"'
+    expected: block
+  - id: block-string-context
+    finding: F07
+    criterion: input-contract
+    description: A JSON string is not a hook context object.
+    input: invalid-hook-context
+    expected: block
+  - id: allow-nonexecution-tool
+    finding: F07
+    criterion: input-contract
+    description: An unrelated read tool is outside the execution guard's scope.
+    input:
+      tool_name: ReadFile
+      tool_input:
+        filePath: guard-test-only.txt
+    expected: pass

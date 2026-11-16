@@ -1,0 +1,6 @@
+pytest==8.3.5
+pytest-html==4.1.1
+Hypothesis==6.131.9
+PyYAML==6.0.3
+jsonschema==4.23.0
+bandit==1.8.3
