@@ -1,0 +1,42 @@
+name: Python hook tests
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-test.txt
+      - name: Hook suites and framework tests
+        run: python -m pytest --junitxml=reports/tests.xml
+      - name: Static analysis
+        if: ${{ !cancelled() }}
+        run: python -m bandit -r hooks framework -f json -o reports/bandit.json
+      - name: Publish summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          echo '## Hook checks' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Download hook-reports and open tests.html for interactive results and failure details. XML and separate Bandit JSON are included.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Failed tests indicate decision mismatches; errors indicate execution or response problems. Existing SQL issues remain visible. A green run is not security certification.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: hook-reports
+          path: reports/
+          if-no-files-found: error
+          retention-days: 7

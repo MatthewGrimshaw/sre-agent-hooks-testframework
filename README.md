@@ -146,7 +146,38 @@ Open [reports/tests.html](./reports/tests.html) in a browser. It works offline.
   sensitive operational data into catalogues.
 
 Reports, caches, and the local Python environment are ignored by Git.
-No automated GitHub Actions workflow is currently included.
+
+### Automated checks on GitHub
+
+The [hook-tests workflow](./.github/workflows/hook-tests.yml) runs all hook
+suites and framework tests when commits are **pushed to GitHub** and when a
+pull request is opened or updated. A local commit alone does not trigger it.
+It also runs every Monday at 05:23 UTC and can be started manually from the
+repository's **Actions** tab once the workflow is on the default branch.
+
+The workflow uses Python 3.13 on Linux, runs Bandit separately, and uploads a
+`hook-reports` artifact containing HTML, XML, and Bandit JSON reports. Reports
+are uploaded even when checks fail, unless the run is cancelled, and are kept
+for seven days. Download and extract the artifact, then open `tests.html`.
+
+Commit and push the workflow together with the framework files to enable it.
+GitHub Actions must be enabled in the repository settings. The existing SQL
+issues will make the check fail until they are addressed; they are not hidden
+to produce a green result. Check the test report and the separate Bandit step
+to identify why a run failed.
+
+**Expected output:** open **Actions > Python hook tests**, then select a run.
+The run shows a green status when all checks pass, or a red status when tests
+fail, encounter errors, or Bandit reports findings. Its summary links the
+results to the downloadable `hook-reports` artifact:
+
+| Output | What it tells you |
+|---|---|
+| `tests.html` | Interactive overview of each scenario, expected and actual decisions, and expandable diagnostic details. Open this first. |
+| `tests.xml` | The same test outcomes in a machine-readable format for other reporting tools. |
+| `bandit.json` | Separate source-code analysis findings; these are not included in the HTML test results. |
+| Step logs | Installation, execution, and diagnostic messages, including failures that prevent reports from being generated. |
+
 
 ## Add a hook or a scenario
 
