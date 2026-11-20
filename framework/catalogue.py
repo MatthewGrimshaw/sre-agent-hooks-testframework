@@ -47,7 +47,8 @@ def load_catalogue(path: Path, root: Path = ROOT) -> Suite:
         return result
 
     UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
-    catalogue = yaml.load(path.read_text(encoding="utf-8"), Loader=UniqueLoader)
+    # UniqueLoader inherits SafeLoader and adds duplicate-key rejection.
+    catalogue = yaml.load(path.read_text(encoding="utf-8"), Loader=UniqueLoader)  # nosec B506
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(catalogue)
     json.dumps(catalogue, allow_nan=False)
