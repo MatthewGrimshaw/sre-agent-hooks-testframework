@@ -55,6 +55,48 @@ def test_invalid_execution_command_type_rejects(value):
     assert result.outcome == "block", f"F07: {result.detail}"
 
 
+@pytest.mark.parametrize(("subscription", "expected"), [
+    ("MyAzureSubscriptionName", "no_objection"),
+    ("76A256FD-59FD-473A-9214-04EADDBCD56E", "no_objection"),
+    ("unapproved-subscription", "block"),
+])
+def test_kill_subscription_allowlist(subscription, expected):
+    command = (
+        f"az vm run-command invoke --subscription {subscription} "
+        """--scripts 'sqlcmd -Q "KILL 51"'"""
+    )
+    result = run_hook(
+        {"tool_input": {"command": command}}, SUITE.hook,
+        SUITE.timeout_seconds, SUITE.protocol,
+    )
+    assert result.outcome == expected, result.detail
+
+
+@pytest.mark.parametrize(("subscription", "spid", "expected"), [
+    ("production", 51, "no_objection"),
+    ("nonproduction", 51, "no_objection"),
+    ("production", 50, "block"),
+    ("unlisted-production", 51, "block"),
+])
+def test_mixed_subscription_allowlist(tmp_path, subscription, spid, expected):
+    hook = tmp_path / "hook.py"
+    source = SUITE.hook.read_text(encoding="utf-8")
+    hook.write_text(source.replace(
+        "ALLOWED_SUBSCRIPTIONS = [",
+        'ALLOWED_SUBSCRIPTIONS = ["production", "nonproduction",',
+        1,
+    ), encoding="utf-8")
+    command = (
+        f"az vm run-command invoke --subscription {subscription} "
+        f"""--scripts 'sqlcmd -Q "KILL {spid}"'"""
+    )
+    result = run_hook(
+        {"tool_input": {"command": command}}, hook,
+        SUITE.timeout_seconds, SUITE.protocol,
+    )
+    assert result.outcome == expected, result.detail
+
+
 def test_all_initial_findings_have_negative_regressions():
     initial = {f"F{number:02}" for number in range(1, 8)}
     negatives = {case.finding for case in SUITE.cases if case.expected == "block"}
