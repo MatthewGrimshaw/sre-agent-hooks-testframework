@@ -49,6 +49,26 @@ cases:
           az vm run-command invoke --subscription production
           --scripts 'sqlcmd -Q "SELECT 1"'
     expected: {outcome: no_objection}
+  - id: allow-read-write-keyword-literal
+    finding: F01
+    criterion: sql-readonly
+    description: Write keywords inside SQL string data do not constitute a write.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts "sqlcmd -Q \"SELECT 'DROP TABLE dbo.GuardReviewProbe'\""
+    expected: {outcome: no_objection}
+  - id: allow-explicit-server-read
+    finding: F06
+    criterion: sql-readonly
+    description: Explicit SQL servers remain supported for read-only diagnostics.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -S diagnostics-sql.invalid -Q "SELECT 1"'
+    expected: {outcome: no_objection}
   - id: block-prod-kill
     finding: F06
     criterion: kill-policy
@@ -107,6 +127,26 @@ cases:
           az vm run-command invoke --subscription production
           --scripts 'sqlcmd -Q "EXEC dbo.usp_detectblocking DROP TABLE dbo.GuardReviewProbe"'
     expected: {outcome: block}
+  - id: block-proc-newline-write
+    finding: F02
+    criterion: sql-readonly
+    description: A newline after an approved procedure cannot hide a write.
+    input:
+      tool_input:
+        command: |-
+          az vm run-command invoke --subscription production --scripts 'sqlcmd -Q "EXECUTE [dbo].[usp_detectblocking]
+          DROP TABLE dbo.GuardReviewProbe"'
+    expected: {outcome: block}
+  - id: allow-proc-then-read
+    finding: F02
+    criterion: sql-readonly
+    description: A bare approved procedure and a separate read remain permitted.
+    input:
+      tool_input:
+        command: >-
+          az vm run-command invoke --subscription production
+          --scripts 'sqlcmd -Q "EXECUTE [dbo].[usp_detectblocking]; SELECT 1"'
+    expected: {outcome: no_objection}
   - id: block-cte-delete
     finding: F03
     criterion: sql-readonly

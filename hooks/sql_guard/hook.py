@@ -2,10 +2,18 @@
 #!/usr/bin/env python3
 """PreToolUse guard.
 
+The hook context must be a JSON object; other JSON values are blocked.
+Only recognised execution fields and a single quoted inline SQL query are
+accepted. Unsupported shell syntax, SQL comments and SQLCMD directives fail
+closed. KILL retains the legacy subscription-only policy: subscription approval
+does not establish the identity of the SQL server. Explicit SQL server overrides
+are blocked for KILL until destination authorisation is configured. Read-query
+checks conservatively reject modifying keywords even when used as identifiers.
+
 Regex-inspects every az CLI command. `az vm/vmss run-command` is permitted only
 when it invokes sqlcmd AND every statement in the sqlcmd query is read-only:
   - SELECT
-  - allowlisted read-only stored procedures
+  - allowlisted read-only stored procedures (bare calls without arguments)
   - inert preludes (SET NOCOUNT ON, USE <db>)
 
 One narrow exception exists for remediation: a *single* session kill, expressed
@@ -20,13 +28,14 @@ The subscription must also be named explicitly on the command line, and it
 determines what is allowed there:
 
   - read-only SQL  -> permitted in ANY subscription
-  - KILL <spid>    -> permitted ONLY in the non-production subscription
+  - KILL <spid>    -> permitted ONLY in a subscription in ALLOWED_SUBSCRIPTIONS,
+                     whether production or non-production
 
 `az account set` mutates an ambient context this guard cannot observe, so a
 command without `--subscription` could silently be running against production.
 Such a command is blocked rather than guessed at.
 """
-import sys, json, re
+import sys, json, re, shlex
 
 # Stored procedures that are known read-only and may be EXEC'd.
 ALLOWED_PROCS = {
@@ -40,12 +49,19 @@ ALLOWED_PROCS = {
 MIN_KILLABLE_SPID = 51
 MAX_SPID = 32767
 
-# The only subscription in which a session may be killed. Reads are allowed
-# anywhere; terminating a session is confined to non-production. Both the
-# display name and the id are accepted, since either may appear on the CLI.
-NONPROD_SUB_DISPLAY = "MyAzureSubscriptionName"
-NONPROD_SUB_ID = "XXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXX"
-NONPROD_SUB_ALIASES = {NONPROD_SUB_DISPLAY.lower(), NONPROD_SUB_ID.lower()}
+# Add approved production AND non-production subscription names or IDs below.
+# To approve more than one subscription, add one quoted name or ID per line,
+# followed by a comma, inside this list. Matching is case-insensitive.
+# Listing a production subscription permits bounded KILL commands there too.
+# Example additional entries (uncomment and replace with your actual values):
+#     "MyProductionSubscription",
+#     "another-approved-subscription-id",
+# Each command must still specify exactly one --subscription.
+ALLOWED_SUBSCRIPTIONS = [
+    "MyAzureSubscriptionName",
+    "76a256fd-59fd-473a-9214-04eaddbcd56e",
+]
+ALLOWED_SUB_ALIASES = {subscription.lower() for subscription in ALLOWED_SUBSCRIPTIONS}
 
 def block(reason):
     print(json.dumps({"decision": "block", "reason": reason}))
@@ -60,27 +76,36 @@ try:
 except Exception:
     block("run-command guard: unreadable hook context (failing closed).")
 
-ti = ctx.get("tool_input") or {}
+if not isinstance(ctx, dict):
+    block("run-command guard: hook context must be a JSON object (failing closed).")
+
+if ctx.get("tool_name") in {"ReadFile", "ListDirectory", "SearchFiles"}:
+    no_opinion()
+
+ti = ctx.get("tool_input")
+if not isinstance(ti, dict) or not ti:
+    block("run-command guard: execution input must be a nonempty object.")
 parts = []
-if isinstance(ti, dict):
-    for k in ("command", "code", "script", "scripts", "args", "commandLine", "input"):
-        v = ti.get(k)
-        if isinstance(v, str):
-            parts.append(v)
-        elif isinstance(v, (list, tuple)):
-            parts.extend(str(x) for x in v)
-else:
-    parts.append(str(ti))
+for k in ("command", "code", "script", "scripts", "args", "commandLine", "input"):
+    if k not in ti:
+        continue
+    v = ti[k]
+    if isinstance(v, str) and v.strip():
+        parts.append(v)
+    elif isinstance(v, list) and v and all(isinstance(x, str) and x.strip() for x in v):
+        parts.extend(v)
+    else:
+        block("run-command guard: execution fields must contain nonempty strings.")
 cmd = " ".join(parts).strip()
 
 if not cmd:
-    no_opinion()
+    block("run-command guard: no recognised execution command was supplied.")
 
 norm = re.sub(r"\s+", " ", cmd)
 low = norm.lower()
 
 # ---- Scope: only govern az vm/vmss run-command -----------------------------
-if not re.search(r"\baz\s+(vm|vmss)\s+run-command\b", low):
+if not re.search(r"\baz[\"']?\s+(?:--[\w-]+(?:[=\s]+\S+)?\s+)*(vm|vmss)\s+run-command\b", low):
     no_opinion()
 
 if not re.search(r"\baz\s+(vm|vmss)\s+run-command\s+invoke\b", low):
@@ -98,6 +123,35 @@ payload = payload.replace('\\"', '"').replace("\\'", "'")
 # Searched with the --scripts span removed, so a `--subscription` smuggled into
 # the SQL text cannot be mistaken for the real CLI argument.
 az_args = cmd[:m.start()] + " " + cmd[m.end():]
+if not re.match(r"^\s*az\s+(vm|vmss)\s+run-command\s+invoke\b", az_args, re.I):
+    block("run-command guard: unsupported Azure command form or shell prefix.")
+try:
+    outer_tokens = shlex.split(az_args)
+except ValueError:
+    block("run-command guard: malformed Azure command quoting.")
+valued_options = {
+    "--subscription", "--resource-group", "-g", "--name", "-n",
+    "--command-id", "--instance-id", "--ids",
+}
+switch_options = {"--only-show-errors", "--debug", "--verbose"}
+i = 4
+seen_options = set()
+while i < len(outer_tokens):
+    option, sep, value = outer_tokens[i].partition("=")
+    if option in seen_options:
+        block("run-command guard: duplicate Azure argument.")
+    seen_options.add(option)
+    if option in switch_options and not sep:
+        i += 1
+        continue
+    if option not in valued_options:
+        block("run-command guard: unsupported Azure argument or additional shell operation.")
+    if not sep:
+        i += 1
+        value = outer_tokens[i] if i < len(outer_tokens) else ""
+    if not value or value.startswith("-") or re.search(r"[;|&<>`$\r\n]", value):
+        block("run-command guard: invalid Azure argument value.")
+    i += 1
 sub_m = re.search(
     r"--subscription[=\s]+(\"(?P<dq>[^\"]*)\"|'(?P<sq>[^']*)'|(?P<bare>[^\s\"']+))",
     az_args)
@@ -110,7 +164,7 @@ subscription = (sub_m.group("dq") or sub_m.group("sq")
                 or sub_m.group("bare") or "").strip()
 if not subscription:
     block("run-command guard: --subscription was supplied but empty.")
-is_nonprod = subscription.lower() in NONPROD_SUB_ALIASES
+is_approved_subscription = subscription.lower() in ALLOWED_SUB_ALIASES
 
 # ---- Payload must be exactly a sqlcmd invocation ---------------------------
 if not re.match(r"^\s*sqlcmd\b", payload, re.IGNORECASE):
@@ -141,15 +195,43 @@ query = (q.group("dq") or q.group("sq") or q.group("bare") or "").strip()
 query = query.replace('\\"', '"').replace("\\'", "'")
 if not query:
     block("run-command guard: empty sqlcmd query.")
+if q.group("bare") is not None or payload[q.end():].strip():
+    block("run-command guard: exactly one quoted query is required, with no trailing operations.")
+try:
+    sqlcmd_tokens = shlex.split(payload[:q.start()])
+except ValueError:
+    block("run-command guard: malformed sqlcmd arguments.")
+i = 1
+seen_sqlcmd_options = set()
+while i < len(sqlcmd_tokens):
+    option = sqlcmd_tokens[i]
+    if option in seen_sqlcmd_options:
+        block("run-command guard: duplicate sqlcmd argument.")
+    seen_sqlcmd_options.add(option)
+    if option in {"-E", "-C", "-b"}:
+        i += 1
+        continue
+    if option not in {"-S", "-d", "-U", "-P", "-l", "-t"} or i + 1 >= len(sqlcmd_tokens):
+        block("run-command guard: unsupported sqlcmd argument.")
+    if re.search(r"[;|&<>`$\r\n]", sqlcmd_tokens[i + 1]):
+        block("run-command guard: invalid sqlcmd argument value.")
+    i += 2
 
 # ---- Every statement must be read-only ------------------------------------
 # Strip string literals so keywords inside data can't trigger, then split on ';'
 stripped = re.sub(r"'(?:''|[^'])*'", "''", query)
+if re.search(r"--|/\*|\*/|!!|(?m:^\s*:)|\$\(", stripped):
+    block("run-command guard: SQL comments and SQLCMD directives are not supported.")
+if "'" in stripped.replace("''", "") or '"' in stripped:
+    block("run-command guard: unsupported SQL quoting.")
 statements = [s.strip() for s in stripped.split(";") if s.strip()]
 if not statements:
     block("run-command guard: no SQL statement found in the sqlcmd query.")
 
-INERT = re.compile(r"^set\s+(nocount|transaction\s+isolation\s+level|deadlock_priority|lock_timeout)\b", re.I)
+INERT = re.compile(
+    r"set\s+(?:nocount\s+(?:on|off)|transaction\s+isolation\s+level\s+"
+    r"(?:read\s+uncommitted|read\s+committed|repeatable\s+read|snapshot|serializable)"
+    r"|deadlock_priority\s+(?:low|normal|high|-?\d+)|lock_timeout\s+-?\d+)", re.I)
 USE_DB = re.compile(r"^use\s+[\w\[\]\.]+$", re.I)
 SELECT = re.compile(r"^(with\b.*\bselect\b|select\b)", re.I | re.S)
 EXEC = re.compile(r"^exec(ute)?\s+(?P<proc>[\w\[\]\.]+)", re.I)
@@ -176,7 +258,7 @@ kill_statements = 0
 non_kill_statements = 0
 
 for st in statements:
-    if INERT.match(st) or USE_DB.match(st):
+    if INERT.fullmatch(st) or USE_DB.fullmatch(st):
         continue
 
     # ---- Remediation: a single, bounded session kill in plain SQL ----------
@@ -190,6 +272,10 @@ for st in statements:
     if em:
         proc = em.group("proc").replace("[", "").replace("]", "").lower()
         if proc in ALLOWED_PROCS:
+            if not EXEC.fullmatch(st):
+                block("run-command guard: an allowlisted procedure call must contain "
+                      "only EXEC and the procedure name; arguments and trailing SQL "
+                      "are not permitted.")
             non_kill_statements += 1
             continue
         if KILL_PROC.search(proc):
@@ -200,6 +286,12 @@ for st in statements:
               "Permitted: {}.".format(em.group("proc"), ", ".join(sorted(ALLOWED_PROCS))))
 
     if SELECT.match(st):
+        if re.search(
+            r"\b(?:insert|update|delete|merge|drop|alter|create|truncate|exec|execute|"
+            r"grant|deny|revoke|kill|backup|restore|dbcc|bulk|reconfigure|shutdown|"
+            r"set|use|openrowset|opendatasource|openquery)\b", st, re.I
+        ):
+            block("run-command guard: modifying or unsupported SQL within a read query.")
         # A SELECT must not smuggle writes (e.g. SELECT ... INTO, FOR XML + exec)
         if re.search(r"\binto\s+[\w\[\]#\.]+", st, re.I):
             block("run-command guard: 'SELECT ... INTO' writes data and is not permitted.")
@@ -213,11 +305,14 @@ for st in statements:
 
 # ---- Kill batches are deliberately minimal --------------------------------
 if kill_statements:
-    if not is_nonprod:
-        block("run-command guard: KILL is permitted only in the non-production "
-              "subscription ('{}' / {}); this command targets '{}'. Read-only "
+    if "-S" in seen_sqlcmd_options:
+        block("run-command guard: KILL with an explicit SQL server is not permitted; "
+              "no approved SQL destination has been configured.")
+    if not is_approved_subscription:
+        block("run-command guard: KILL is permitted only in an approved "
+              "subscription ({}); this command targets '{}'. Read-only "
               "queries are permitted in any subscription."
-              .format(NONPROD_SUB_DISPLAY, NONPROD_SUB_ID, subscription))
+              .format(", ".join(ALLOWED_SUBSCRIPTIONS), subscription))
     if kill_statements > 1:
         block("run-command guard: at most one session kill per command; this batch "
               "contains {}. Issue them one at a time.".format(kill_statements))
