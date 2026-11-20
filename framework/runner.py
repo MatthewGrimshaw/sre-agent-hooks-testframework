@@ -1,6 +1,7 @@
 import json
 import math
-import subprocess
+# Required to execute the selected hook.
+import subprocess  # nosec B404
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -79,12 +80,14 @@ def execute_hook(context: object, hook: Path, timeout: float = 3) -> Execution:
     if len(raw.encode("utf-8")) > 65536:
         return Execution(error="Input exceeds harness limit of 64 KiB.")
     try:
-        process = subprocess.run(
+        # Execute the selected hook; scenario input is JSON on stdin, not shell code.
+        process = subprocess.run(  # nosec B603
             [sys.executable, str(hook)],
             input=raw.encode("utf-8"),
             capture_output=True,
             timeout=timeout,
             cwd=hook.parent,
+            shell=False,
         )
     except subprocess.TimeoutExpired as error:
         return Execution(
